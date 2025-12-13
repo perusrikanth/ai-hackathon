@@ -1,12 +1,14 @@
+from src.agents.adaptive_repair_agent import AdaptiveRepairAgent
+from src.agents.error_diagnosis_agent import ErrorDiagnosisAgent
+from src.agents.execution_agent import ExecutionAgent
+from src.agents.script_generator_agent import ScriptGeneratorAgent
+from src.agents.flow_discovery_agent import FlowDiscoveryAgent
 from fastapi import FastAPI
 from pydantic import BaseModel
+from dotenv import load_dotenv
 
-
-from src.agents.flow_discovery_agent import FlowDiscoveryAgent
-from src.agents.script_generator_agent import ScriptGeneratorAgent
-from src.agents.execution_agent import ExecutionAgent
-from src.agents.error_diagnosis_agent import ErrorDiagnosisAgent
-from src.agents.adaptive_repair_agent import AdaptiveRepairAgent
+# Load environment variables from .env file before importing agents
+load_dotenv()
 
 
 app = FastAPI()
