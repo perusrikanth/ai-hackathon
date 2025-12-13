@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+streamlit
+playwright
+python-dotenv
+loguru
+pydantic
+pillow
+pytest
+pixelmatch
+openai
