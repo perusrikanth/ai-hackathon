@@ -18,17 +18,37 @@ class FlowDiscoveryAgent:
         )
 
     def _extract_json(self, text):
-        """Extract JSON from text, handling markdown code blocks."""
-        # Try to find JSON in markdown code blocks
+        """Extract JSON from text, handling markdown code blocks and nested structures."""
+        # Try to find JSON in markdown code blocks first
         json_match = re.search(r'```(?:json)?\s*(\[.*?\]|\{.*?\})\s*```', text, re.DOTALL)
         if json_match:
-            text = json_match.group(1)
+            return json_match.group(1).strip()
         
-        # Try to find JSON object/array directly
-        json_match = re.search(r'(\[.*?\]|\{.*?\})', text, re.DOTALL)
-        if json_match:
-            text = json_match.group(1)
+        # Try to find JSON array (balanced brackets)
+        bracket_count = 0
+        start_idx = text.find('[')
+        if start_idx != -1:
+            for i in range(start_idx, len(text)):
+                if text[i] == '[':
+                    bracket_count += 1
+                elif text[i] == ']':
+                    bracket_count -= 1
+                    if bracket_count == 0:
+                        return text[start_idx:i+1].strip()
         
+        # Try to find JSON object (balanced braces)
+        brace_count = 0
+        start_idx = text.find('{')
+        if start_idx != -1:
+            for i in range(start_idx, len(text)):
+                if text[i] == '{':
+                    brace_count += 1
+                elif text[i] == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        return text[start_idx:i+1].strip()
+        
+        # Fallback: return original text
         return text.strip()
 
     def discover(self, url):
