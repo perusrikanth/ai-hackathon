@@ -1,5 +1,6 @@
 from langgraph.graph import StateGraph, START, END
 from typing import Optional, List, Dict, Any, TypedDict
+
 from src.agents.flow_discovery_agent import FlowDiscoveryAgent
 from src.agents.script_generator_agent import ScriptGeneratorAgent
 from src.agents.execution_agent import ExecutionAgent
@@ -8,6 +9,9 @@ from src.agents.adaptive_repair_agent import AdaptiveRepairAgent
 from src.agents.regression_monitor_agent import RegressionMonitorAgent
 
 
+# -------------------------
+# State definition
+# -------------------------
 class WorkflowState(TypedDict, total=False):
     url: str
     flows: Optional[List[Dict[str, Any]]]
@@ -21,7 +25,9 @@ class WorkflowState(TypedDict, total=False):
     max_retries: int
 
 
-# Initialize agents
+# -------------------------
+# Agent instances
+# -------------------------
 flow_agent = FlowDiscoveryAgent()
 script_agent = ScriptGeneratorAgent()
 exec_agent = ExecutionAgent()
@@ -30,66 +36,123 @@ repair_agent = AdaptiveRepairAgent()
 regression_agent = RegressionMonitorAgent()
 
 
-def discover_flow_node(state: Dict[str, Any]) -> Dict[str, Any]:
+# -------------------------
+# Node implementations
+# -------------------------
+def discover_flow_node(state: WorkflowState) -> Dict[str, Any]:
     result = flow_agent.discover(state["url"])
-    updates = {}
-    if "flows" in result:
-        updates["flows"] = result["flows"]
-        if result["flows"]:
-            updates["selected_flow"] = result["flows"][0]
+    updates = {"flows": result.get("flows", [])}
+
+    if updates["flows"]:
+        updates["selected_flow"] = updates["flows"][0]
+
     return updates
 
 
-def generate_script_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    if state.get("selected_flow"):
-        flow_description = f"Name: {state['selected_flow']['name']}\nDescription: {state['selected_flow']['description']}\nSteps: {', '.join(state['selected_flow']['steps'])}"
-        return {"script": script_agent.generate_script(flow_description)}
+def generate_script_node(state: WorkflowState) -> Dict[str, Any]:
+    flow = state.get("selected_flow")
+    if not flow:
+        return {}
+
+    flow_description = (
+        f"Name: {flow['name']}\n"
+        f"Description: {flow['description']}\n"
+        f"Steps: {', '.join(flow['steps'])}"
+    )
+
+    return {"script": script_agent.generate_script(flow_description)}
+
+
+def execute_script_node(state: WorkflowState) -> Dict[str, Any]:
+    if not state.get("script"):
+        return {}
+
+    result = exec_agent.execute(state["script"])
+
+    updates = {"execution_result": result}
+
+    if not result.get("success"):
+        updates["error_count"] = state.get("error_count", 0) + 1
+
+    return updates
+
+
+def diagnose_error_node(state: WorkflowState) -> Dict[str, Any]:
+    stderr = state.get("execution_result", {}).get("stderr", "")
+
+    if stderr and is_non_repairable_error(stderr):
+        return {
+            "diagnosis": "Non-repairable syntax error detected",
+        }
+
+    if stderr:
+        return {
+            "diagnosis": diagnosis_agent.diagnose(stderr)
+        }
+
     return {}
 
 
-def execute_script_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    if state.get("script"):
-        return {"execution_result": exec_agent.execute(state["script"])}
+def repair_script_node(state: WorkflowState) -> Dict[str, Any]:
+    if not state.get("diagnosis") or not state.get("script"):
+        return {}
+
+    repaired = repair_agent.repair(state["script"], state["diagnosis"])
+    return {
+        "script": repaired,
+        "repaired_script": repaired
+    }
+
+
+def compare_regression_node(state: WorkflowState) -> Dict[str, Any]:
+    # Optional placeholder
     return {}
 
 
-def handle_error_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    if state.get("execution_result") and state["execution_result"].get("stderr"):
-        return {"error_count": state.get("error_count", 0) + 1}
-    return {}
+# -------------------------
+# Routing logic
+# -------------------------
+def route_after_execution(state: WorkflowState) -> str:
+    result = state.get("execution_result", {})
+    stderr = result.get("stderr", "")
+
+    # ✅ Success → move forward
+    if result.get("success") is True:
+        return "compare"
+
+    # ❌ Non-repairable → STOP
+    if stderr and is_non_repairable_error(stderr):
+        print("❌ Non-repairable error detected. Exiting workflow.")
+        return "compare"
+
+    # 🔁 Retry limit reached → STOP
+    if state.get("error_count", 0) >= state.get("max_retries", 3):
+        return "compare"
+
+    # 🔧 Repairable failure → try fix
+    return "diagnose"
 
 
-def diagnose_error_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    if state.get("execution_result") and state["execution_result"].get("stderr"):
-        return {"diagnosis": diagnosis_agent.diagnose(state["execution_result"]["stderr"])}
-    return {}
+def is_non_repairable_error(stderr: str) -> bool:
+    NON_REPAIRABLE_ERRORS = [
+        "IndentationError",
+        "SyntaxError",
+        "TabError",
+        "ImportError",
+        "ModuleNotFoundError"
+    ]
+
+    return any(err in stderr for err in NON_REPAIRABLE_ERRORS)
 
 
-def repair_script_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    if state.get("diagnosis") and state.get("script"):
-        repaired = repair_agent.repair(state["script"], state["diagnosis"])
-        return {"repaired_script": repaired, "script": repaired}
-    return {}
-
-
-def compare_regression_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    # Placeholder
-    return {}
-
-
-def should_retry(state: Dict[str, Any]) -> str:
-    if state.get("error_count", 0) < state.get("max_retries", 3):
-        return "repair"
-    return "success"
-
-
+# -------------------------
 # Build the graph
+# -------------------------
 workflow = StateGraph(WorkflowState)
 
 workflow.add_node("discover", discover_flow_node)
 workflow.add_node("generate", generate_script_node)
 workflow.add_node("execute", execute_script_node)
-workflow.add_node("handle_error", handle_error_node)
 workflow.add_node("diagnose", diagnose_error_node)
 workflow.add_node("repair", repair_script_node)
 workflow.add_node("compare", compare_regression_node)
@@ -97,18 +160,18 @@ workflow.add_node("compare", compare_regression_node)
 workflow.add_edge(START, "discover")
 workflow.add_edge("discover", "generate")
 workflow.add_edge("generate", "execute")
-workflow.add_edge("execute", "handle_error")
+
 workflow.add_conditional_edges(
-    "handle_error",
-    should_retry,
+    "execute",
+    route_after_execution,
     {
-        "repair": "diagnose",
-        "success": "compare"
+        "compare": "compare",
+        "diagnose": "diagnose"
     }
 )
+
 workflow.add_edge("diagnose", "repair")
 workflow.add_edge("repair", "execute")
 workflow.add_edge("compare", END)
 
-# Compile the graph
 graph = workflow.compile()
