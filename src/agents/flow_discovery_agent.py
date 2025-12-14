@@ -1,6 +1,8 @@
 import os
 import json
 import re
+from bs4 import BeautifulSoup
+from playwright.sync_api import sync_playwright
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import PromptTemplate
 
@@ -18,30 +20,6 @@ class FlowDiscoveryAgent:
             openai_api_key=api_key,
             openai_api_base="https://openrouter.ai/api/v1",
             temperature=0.3
-        )
-        self.prompt_template = PromptTemplate.from_template(
-            """Analyze the webpage at {url} and identify the most important user flows (login, signup, checkout, search, etc.).
-
-You MUST respond with ONLY a valid JSON array. Each item should be a flow object with:
-- "name": string (e.g., "Login", "Signup", "Checkout")
-- "description": string (brief description of the flow)
-- "steps": array of strings (list of steps in the flow)
-
-Example format:
-[
-  {{
-    "name": "Login",
-    "description": "User authentication flow",
-    "steps": ["Navigate to login page", "Enter credentials", "Click login button"]
-  }},
-  {{
-    "name": "Search",
-    "description": "Product search functionality",
-    "steps": ["Enter search query", "Click search button", "View results"]
-  }}
-]
-
-Respond with ONLY the JSON array, no additional text or explanation."""
         )
 
     def _extract_json(self, text):
@@ -200,10 +178,121 @@ Respond with ONLY the JSON array, no additional text or explanation."""
             return None
 
     def discover(self, url):
-        chain = self.prompt_template | self.llm
-        response = chain.invoke({"url": url})
+        # Fetch webpage content
+        page_content = self._fetch_webpage_content(url)
+
+        # Debug: Check if page_content was fetched
+        print(f"[DEBUG] page_content is None: {page_content is None}")
+        if page_content:
+            print(f"[DEBUG] page_content keys: {list(page_content.keys())}")
+            print(
+                f"[DEBUG] interactive_elements count: {len(page_content.get('interactive_elements', []))}")
+            print(
+                f"[DEBUG] interactive_elements (first 3): {page_content.get('interactive_elements', [])[:3]}")
+
+        # Build prompt template with actual page content if available
+        if page_content:
+            interactive_elements = page_content.get('interactive_elements', [])
+            print(
+                f"[DEBUG] Processing {len(interactive_elements)} interactive elements")
+
+            interactive_summary = "\n".join([
+                f"- {elem.get('type', 'element')}: {elem.get('text', elem.get('action', ''))}"
+                # Limit to 50 elements
+                for elem in interactive_elements[:50]
+            ])
+
+            print(
+                f"[DEBUG] interactive_summary length: {len(interactive_summary)}")
+            print(
+                f"[DEBUG] interactive_summary preview (first 500 chars): {interactive_summary[:500]}")
+
+            prompt_template = PromptTemplate.from_template(
+                """I have extracted the following content from the webpage at {url}. Based on this actual page content, identify the most important user flows (login, signup, checkout, search, etc.).
+
+Page Title: {title}
+
+Interactive Elements Found:
+{interactive_summary}
+
+Visible Text Content (sample):
+{visible_text}
+
+HTML Structure (key elements):
+{html_structure}
+
+Using the above extracted content, identify the user flows that exist on this page.
+
+You MUST respond with ONLY a valid JSON array. Each item should be a flow object with:
+- "name": string (e.g., "Login", "Signup", "Checkout")
+- "description": string (brief description of the flow)
+- "steps": array of strings (list of steps in the flow)
+
+Example format:
+[
+  {{
+    "name": "Login",
+    "description": "User authentication flow",
+    "steps": ["Navigate to login page", "Enter credentials", "Click login button"]
+  }},
+  {{
+    "name": "Search",
+    "description": "Product search functionality",
+    "steps": ["Enter search query", "Click search button", "View results"]
+  }}
+]
+
+Respond with ONLY the JSON array, no additional text or explanation."""
+            )
+
+            print(
+                f"[DEBUG] Using page_content-based prompt")
+
+            chain = prompt_template | self.llm
+            response = chain.invoke({
+                "url": url,
+                "title": page_content.get('title', 'N/A'),
+                "interactive_summary": interactive_summary,
+                "visible_text": page_content.get('visible_text', '')[:3000],
+                "html_structure": page_content.get('html_structure', '')[:5000]
+            })
+        else:
+            # Fallback to URL-only analysis if scraping fails
+            print(
+                f"[DEBUG] page_content is None or empty, using fallback URL-only prompt")
+
+            prompt_template = PromptTemplate.from_template(
+                """Analyze the webpage at {url} and identify the most important user flows (login, signup, checkout, search, etc.).
+
+Note: Unable to fetch actual page content. Base your analysis on the URL structure and common patterns.
+
+You MUST respond with ONLY a valid JSON array. Each item should be a flow object with:
+- "name": string (e.g., "Login", "Signup", "Checkout")
+- "description": string (brief description of the flow)
+- "steps": array of strings (list of steps in the flow)
+
+Example format:
+[
+  {{
+    "name": "Login",
+    "description": "User authentication flow",
+    "steps": ["Navigate to login page", "Enter credentials", "Click login button"]
+  }},
+  {{
+    "name": "Search",
+    "description": "Product search functionality",
+    "steps": ["Enter search query", "Click search button", "View results"]
+  }}
+]
+
+Respond with ONLY the JSON array, no additional text or explanation."""
+            )
+
+            chain = prompt_template | self.llm
+            response = chain.invoke({"url": url})
+
         content = response.content
-        
+
         # Extract and parse JSON
         try:
             json_text = self._extract_json(content)
