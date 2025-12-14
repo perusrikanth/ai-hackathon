@@ -1,6 +1,7 @@
 import os
 import re
-from openai import OpenAI
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import PromptTemplate
 from src.automation.script_templates.base_script import generate_base_playwright_script
 
 
@@ -12,13 +13,14 @@ class ScriptGeneratorAgent:
                 "OPENROUTER_API_KEY environment variable is not set. "
                 "Please set it in your environment or .env file."
             )
-        self.client = OpenAI(
-            api_key=api_key,
-            base_url="https://openrouter.ai/api/v1"
+        self.llm = ChatOpenAI(
+            model="anthropic/claude-3.5-sonnet",
+            openai_api_key=api_key,
+            openai_api_base="https://openrouter.ai/api/v1",
+            temperature=0.3
         )
-
-    def generate_script(self, flow_description):
-        prompt = f"""Convert this flow description into Playwright Python code steps:
+        self.prompt_template = PromptTemplate.from_template(
+            """Convert this flow description into Playwright Python code steps:
 
 {flow_description}
 
@@ -29,17 +31,12 @@ You MUST output ONLY Python Playwright code statements, one per line. Each line 
 - await page.wait_for_selector("selector")
 
 Do not include any explanations, comments, or markdown formatting. Output only the code statements."""
-
-        response = self.client.chat.completions.create(
-            model="anthropic/claude-3.5-sonnet",
-            messages=[
-                {"role": "system", "content": "You are a code generator that outputs only Playwright Python code statements."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3
         )
 
-        content = response.choices[0].message.content
+    def generate_script(self, flow_description):
+        chain = self.prompt_template | self.llm
+        response = chain.invoke({"flow_description": flow_description})
+        content = response.content
 
         # Extract code from markdown code blocks if present
         code_match = re.search(

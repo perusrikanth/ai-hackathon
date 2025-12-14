@@ -1,5 +1,6 @@
 import os
-from openai import OpenAI
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import PromptTemplate
 from src.automation.script_templates.base_script import generate_base_playwright_script
 
 
@@ -11,13 +12,13 @@ class AdaptiveRepairAgent:
                 "OPENROUTER_API_KEY environment variable is not set. "
                 "Please set it in your environment or .env file."
             )
-        self.client = OpenAI(
-            api_key=api_key,
-            base_url="https://openrouter.ai/api/v1"
+        self.llm = ChatOpenAI(
+            model="gpt-4o-mini",
+            openai_api_key=api_key,
+            openai_api_base="https://openrouter.ai/api/v1"
         )
-
-    def repair(self, original_script, diagnosis):
-        prompt = f"""
+        self.prompt_template = PromptTemplate.from_template(
+            """
         Original Playwright code:
         {original_script}
 
@@ -28,11 +29,10 @@ class AdaptiveRepairAgent:
 
         Regenerate a corrected Playwright script.
         """
-
-        response = self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}]
         )
 
-        lines = response.choices[0].message.content.split("\n")
+    def repair(self, original_script, diagnosis):
+        chain = self.prompt_template | self.llm
+        response = chain.invoke({"original_script": original_script, "diagnosis": diagnosis})
+        lines = response.content.split("\n")
         return generate_base_playwright_script(lines)

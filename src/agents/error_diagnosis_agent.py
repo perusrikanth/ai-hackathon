@@ -1,5 +1,6 @@
 import os
-from openai import OpenAI
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import PromptTemplate
 
 
 class ErrorDiagnosisAgent:
@@ -10,22 +11,22 @@ class ErrorDiagnosisAgent:
                 "OPENROUTER_API_KEY environment variable is not set. "
                 "Please set it in your environment or .env file."
             )
-        self.client = OpenAI(
-            api_key=api_key,
-            base_url="https://openrouter.ai/api/v1"
+        self.llm = ChatOpenAI(
+            model="meta-llama/llama-3.1-70b-instruct",
+            openai_api_key=api_key,
+            openai_api_base="https://openrouter.ai/api/v1"
         )
-
-    def diagnose(self, stderr):
-        prompt = f"""
+        self.prompt_template = PromptTemplate.from_template(
+            """
         Analyze this Playwright error:
         {stderr}
 
 
         Explain what went wrong and suggest a fix.
         """
-
-        response = self.client.chat.completions.create(
-            model="meta-llama/llama-3.1-70b-instruct",
-            messages=[{"role": "user", "content": prompt}]
         )
-        return response.choices[0].message.content
+
+    def diagnose(self, stderr):
+        chain = self.prompt_template | self.llm
+        response = chain.invoke({"stderr": stderr})
+        return response.content

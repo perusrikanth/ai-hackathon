@@ -1,14 +1,17 @@
+from dotenv import load_dotenv
+
+# Load environment variables from .env file before importing agents
+load_dotenv()
+
 from src.agents.adaptive_repair_agent import AdaptiveRepairAgent
 from src.agents.error_diagnosis_agent import ErrorDiagnosisAgent
 from src.agents.execution_agent import ExecutionAgent
 from src.agents.script_generator_agent import ScriptGeneratorAgent
 from src.agents.flow_discovery_agent import FlowDiscoveryAgent
+from src.agents.workflow_graph import graph
 from fastapi import FastAPI
 from pydantic import BaseModel
-from dotenv import load_dotenv
-
-# Load environment variables from .env file before importing agents
-load_dotenv()
+import traceback
 
 
 app = FastAPI()
@@ -55,10 +58,21 @@ def execute_script(data: ExecInput):
 
 @app.post("/diagnose")
 def diagnose(data: DiagnosisInput):
-    return diagnosis_agent.diagnose(data.stderr)
+    diagnosis = diagnosis_agent.diagnose(data.stderr)
+    return {"diagnosis": diagnosis}
 
 
 @app.post("/repair")
 def repair(data: DiagnosisInput):
     diagnosis = diagnosis_agent.diagnose(data.stderr)
     return repair_agent.repair(data.script, diagnosis)
+
+
+@app.post("/run-automation")
+def run_automation(data: URLInput):
+    initial_state = {"url": data.url, "error_count": 0, "max_retries": 3}
+    try:
+        final_state = graph.invoke(initial_state, config={"recursion_limit": 100})
+        return final_state
+    except Exception as e:
+        return {"error": str(e), "traceback": traceback.format_exc()}
